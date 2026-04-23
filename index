@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PID Heading Simulator</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --accent: #38bdf8;
+      --accent-2: #a78bfa;
+      --danger: #f87171;
+      --good: #4ade80;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: radial-gradient(circle at top, #172554 0%, var(--bg) 55%);
+      color: var(--text);
+    }
+
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+
+    h1 { margin: 0 0 6px; font-size: 1.5rem; }
+    .subtitle { color: var(--muted); margin-bottom: 12px; font-size: 0.9rem; }
+
+    .card {
+      background: rgba(17, 24, 39, 0.92);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+      overflow: hidden;
+    }
+
+    .card header {
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.02);
+      font-weight: 700;
+      font-size: 0.95rem;
+    }
+
+    .controls {
+      padding: 10px 12px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.85rem;
+      white-space: nowrap;
+    }
+
+    input[type="range"] { width: 140px; }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #081120;
+      font-weight: 800;
+      cursor: pointer;
+      font-size: 0.8rem;
+    }
+
+    .legend {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      padding: 8px 12px 0;
+      color: var(--muted);
+      font-size: 0.82rem;
+      flex-wrap: wrap;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      display: inline-block;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+
+    .stats {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 8px 12px;
+    }
+
+    .stat {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 10px;
+      padding: 6px 8px;
+      min-width: 110px;
+    }
+
+    .stat .k { color: var(--muted); font-size: 0.7rem; }
+    .stat .v { font-size: 0.9rem; font-weight: 700; }
+
+    .canvas-box {
+      width: 100%;
+      height: 360px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    @media (max-width: 980px) {
+      .canvas-box { height: 320px; }
+      input[type="range"] { width: 120px; }
+      .controls { padding: 10px 10px 12px; }
+      .stats { padding: 8px 10px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>PID Heading Simulator</h1>
+    <div class="subtitle">First-order plant with delay</div>
+
+    <div class="card">
+      <header>Heading Error Plot & Controls</header>
+
+      <div class="controls">
+        <label>Kp <input id="kp" type="range" min="0" max="15" step="0.01" value="2"></label>
+        <span id="kpVal">2.00</span>
+
+        <label>Ki <input id="ki" type="range" min="0" max="10" step="0.01" value="0.5"></label>
+        <span id="kiVal">0.50</span>
+
+        <label>Kd <input id="kd" type="range" min="0" max="2" step="0.01" value="0.2"></label>
+        <span id="kdVal">0.20</span>
+
+        <button id="resetBtn">Reset</button>
+      </div>
+
+      <div class="legend">
+        <span><span class="dot" style="background: var(--danger);"></span>Error</span>
+        <span><span class="dot" style="background: var(--good);"></span>Zero</span>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><div class="k">Heading</div><div class="v" id="finalY">0.0</div></div>
+        <div class="stat"><div class="k">Error</div><div class="v" id="curErr">0.0</div></div>
+      </div>
+
+      <div class="canvas-box">
+        <canvas id="chart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const el = id => document.getElementById(id);
+    const kpSlider = el('kp'), kiSlider = el('ki'), kdSlider = el('kd');
+    const kpVal = el('kpVal'), kiVal = el('kiVal'), kdVal = el('kdVal');
+    const resetBtn = el('resetBtn');
+    const chart = el('chart');
+    const ctx = chart.getContext('2d');
+
+    let dpr = window.devicePixelRatio || 1;
+
+    function resize() {
+      const rect = chart.parentElement.getBoundingClientRect();
+      chart.width = rect.width * dpr;
+      chart.height = rect.height * dpr;
+      chart.style.width = rect.width + 'px';
+      chart.style.height = rect.height + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      draw();
+    }
+
+    function simulate() {
+      const kp = parseFloat(kpSlider.value);
+      const ki = parseFloat(kiSlider.value);
+      const kd = parseFloat(kdSlider.value);
+      kpVal.textContent = kp.toFixed(2);
+      kiVal.textContent = ki.toFixed(2);
+      kdVal.textContent = kd.toFixed(2);
+
+      let y = 0;
+      let integral = 0;
+      let prevError = 0;
+      const delaySteps = 20;
+      const buf = [];
+      const pts = [];
+
+      for (let t = 0; t <= 20; t += 0.01) {
+        const error = 10 - y;
+        integral += error * 0.01;
+        const derivative = (error - prevError) / 0.01;
+        const u = kp * error + ki * integral + kd * derivative;
+        buf.push(u);
+        const uDelayed = buf.length > delaySteps ? buf.shift() : 0;
+
+        const dydt = (-y + 2 * uDelayed) / 5;
+        y += dydt * 0.01;
+
+        pts.push({ t, error, y });
+        prevError = error;
+      }
+
+      return pts;
+    }
+
+    function draw() {
+      const pts = simulate();
+      const w = chart.clientWidth;
+      const h = chart.clientHeight;
+      const minY = -10, maxY = 10;
+      const pad = { l: 60, r: 12, t: 14, b: 28 };
+      const plotW = w - pad.l - pad.r;
+      const plotH = h - pad.t - pad.b;
+
+      ctx.clearRect(0, 0, chart.width, chart.height);
+
+      // grid
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+      ctx.lineWidth = 1;
+      ctx.fillStyle = '#e5e7eb';
+      ctx.font = '11px Arial';
+
+      for (let i = 0; i <= 5; i++) {
+        const x = pad.l + (i / 5) * plotW;
+        ctx.beginPath();
+        ctx.moveTo(x, pad.t);
+        ctx.lineTo(x, pad.t + plotH);
+        ctx.stroke();
+        const tVal = (20 * i / 5).toFixed(0);
+        ctx.fillText(tVal, x - 6, pad.t + plotH + 14);
+      }
+
+      for (let i = 0; i <= 4; i++) {
+        const y = pad.t + (i / 4) * plotH;
+        ctx.beginPath();
+        ctx.moveTo(pad.l, y);
+        ctx.lineTo(pad.l + plotW, y);
+        ctx.stroke();
+        const val = (maxY - (maxY - minY) * (i / 4)).toFixed(0);
+        ctx.fillText(val, 4, y + 4);
+      }
+
+      // axis labels
+      ctx.fillStyle = '#e5e7eb';
+      ctx.font = '12px Arial';
+      ctx.fillText('Time (s)', pad.l + plotW / 2 - 18, h - 6);
+      ctx.save();
+      ctx.translate(22, pad.t + plotH / 2 + 48);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText('Heading error (deg)', 0, 0);
+      ctx.restore();
+
+      // zero line
+      const zeroY = pad.t + plotH - ((0 - minY) / (maxY - minY)) * plotH;
+      ctx.strokeStyle = '#4ade80';
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(pad.l, zeroY);
+      ctx.lineTo(pad.l + plotW, zeroY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // error trace
+      ctx.strokeStyle = '#f87171';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      pts.forEach((p, i) => {
+        const x = pad.l + (p.t / 20) * plotW;
+        const eVis = Math.max(-10, Math.min(10, p.error));
+        const y = pad.t + plotH - ((eVis - minY) / (maxY - minY)) * plotH;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // current point
+      const last = pts[pts.length - 1];
+      const lastX = pad.l + (last.t / 20) * plotW;
+      const lastY = pad.t + plotH - ((Math.max(-10, Math.min(10, last.error)) - minY) / (maxY - minY)) * plotH;
+      ctx.fillStyle = '#38bdf8';
+      ctx.beginPath();
+      ctx.arc(lastX, lastY, 5, 0, Math.PI * 2);
+      ctx.fill();
+
+      el('finalY').textContent = last.y.toFixed(2);
+      el('curErr').textContent = last.error.toFixed(2);
+    }
+
+    kpSlider.oninput = kiSlider.oninput = kdSlider.oninput = draw;
+    resetBtn.onclick = () => {
+      kpSlider.value = 2;
+      kiSlider.value = 0.5;
+      kdSlider.value = 0.2;
+      draw();
+    };
+
+    resize();
+    draw();
+    window.addEventListener('resize', () => {
+      dpr = window.devicePixelRatio || 1;
+      resize();
+    });
+  </script>
+</body>
+</html>
